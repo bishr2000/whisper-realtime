@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whisper ASR – Real-time Speech Recognition</title>
+  <style>
+    :root {
+      --bg: #0f1117; --card: #1a1d27; --card2: #14161f;
+      --border: #2a2d3a; --accent: #6c63ff; --accent2: #ff6584;
+      --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+      --text: #e4e4e7; --muted: #9ca3af;
+      --radius: 14px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+    .app { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+
+    header { text-align: center; padding: 1.5rem 0 1rem; }
+    header h1 { font-size: 1.8rem; font-weight: 700; }
+    header h1 span { color: var(--accent); }
+    header p { color: var(--muted); font-size: .88rem; margin-top: .3rem; }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex; align-items: center; gap: .5rem;
+      justify-content: center; margin-bottom: 1.5rem;
+      font-size: .82rem; color: var(--muted);
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+    }
+    .status-dot.ok { background: var(--green); }
+    .status-dot.warn { background: var(--yellow); }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex; gap: .75rem; align-items: center;
+      justify-content: center; flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .btn {
+      padding: .6rem 1.5rem; border: none; border-radius: 999px;
+      font-size: .9rem; font-weight: 600; cursor: pointer; transition: .2s;
+      display: flex; align-items: center; gap: .4rem;
+    }
+    .btn-live { background: var(--green); color: #000; }
+    .btn-live:hover { filter: brightness(1.1); }
+    .btn-live.recording { background: var(--red); color: #fff; animation: pulse 1.2s infinite; }
+    .btn-upload { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .btn-upload:hover { border-color: var(--accent); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+    .settings-row {
+      display: flex; gap: 1rem; justify-content: center; align-items: center;
+      margin-bottom: 1.5rem; font-size: .82rem; color: var(--muted);
+    }
+    .settings-row label { display: flex; align-items: center; gap: .35rem; }
+    .settings-row select, .settings-row input[type="range"] {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: .2rem .4rem; font-size: .82rem;
+    }
+    .settings-row select:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Model selector ── */
+    .model-row {
+      display: flex; gap: .6rem; justify-content: center; align-items: center;
+      margin-bottom: 1rem; font-size: .82rem; color: var(--muted);
+    }
+    .model-row select {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: .3rem .5rem; font-size: .82rem; min-width: 260px;
+    }
+    .model-row select:disabled { opacity: .5; cursor: not-allowed; }
+    .model-loading {
+      display: none; align-items: center; gap: .4rem;
+      font-size: .78rem; color: var(--yellow);
+    }
+    .model-loading.active { display: inline-flex; }
+    .model-loading .spinner {
+      width: 14px; height: 14px; border: 2px solid var(--border);
+      border-top-color: var(--yellow); border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Waveform visualizer ── */
+    .waveform-container {
+      display: none; margin-bottom: 1.25rem;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: .75rem;
+    }
+    .waveform-container.active { display: block; }
+    .waveform-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: .5rem; font-size: .78rem; color: var(--muted);
+    }
+    .waveform-header .live-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+      display: inline-block; margin-right: .4rem; animation: pulse 1.2s infinite;
+    }
+    #waveCanvas {
+      width: 100%; height: 120px; border-radius: 8px; display: block;
+      background: #14161f;
+    }
+    .vu-row {
+      display: flex; align-items: center; gap: .5rem; margin-top: .5rem;
+    }
+    .vu-bar-track {
+      flex: 1; height: 6px;
+      background: var(--border); border-radius: 999px; overflow: hidden;
+    }
+    .vu-bar-fill {
+      height: 100%; width: 0%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--green), var(--yellow), var(--red));
+      transition: width .08s;
+    }
+    .vu-db { font-size: .72rem; color: var(--muted); min-width: 50px; text-align: right; }
+
+    /* ── Transcript panel ── */
+    .panel {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem 1.25rem;
+      min-height: 260px; display: flex; flex-direction: column;
+    }
+    .panel-head {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: .75rem;
+    }
+    .panel-head h3 {
+      font-size: .78rem; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--accent);
+    }
+    .panel-head .copy-btn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      padding: .2rem .55rem; border-radius: 6px; cursor: pointer; font-size: .75rem;
+    }
+    .panel-head .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+    .panel-body {
+      flex: 1; overflow-y: auto; font-size: .95rem; line-height: 1.75;
+      white-space: pre-wrap; word-wrap: break-word;
+    }
+    .panel-body[dir="rtl"] { text-align: right; }
+
+    /* live chunk flash */
+    .chunk-new {
+      background: rgba(108,99,255,.12); border-radius: 4px;
+      padding: 0 2px; animation: chunkFade 2s forwards;
+    }
+    @keyframes chunkFade { to { background: transparent; } }
+
+    /* ── File upload area ── */
+    .upload-overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.7); justify-content: center; align-items: center;
+    }
+    .upload-overlay.show { display: flex; }
+    .upload-box {
+      background: var(--card); border: 2px dashed var(--border);
+      border-radius: var(--radius); padding: 3rem 2rem; text-align: center;
+      min-width: 360px;
+    }
+    .upload-box.dragover { border-color: var(--accent); }
+    .upload-box p { color: var(--muted); margin-bottom: 1rem; }
+    .upload-box .close-btn {
+      position: absolute; top: 1.5rem; right: 1.5rem;
+      background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer;
+    }
+
+    /* ── Progress ── */
+    .progress {
+      display: none; margin-top: 1rem; text-align: center;
+    }
+    .progress .bar-track {
+      height: 4px; background: var(--border); border-radius: 999px; overflow: hidden;
+    }
+    .progress .bar-fill {
+      height: 100%; width: 0%; background: var(--accent);
+      border-radius: 999px; transition: width .3s;
+    }
+    .progress .label { font-size: .78rem; color: var(--muted); margin-top: .3rem; }
+
+    /* ── Noise cancellation badge ── */
+    .nc-badge {
+      display: inline-flex; align-items: center; gap: .3rem;
+      background: rgba(34,197,94,.1); color: var(--green);
+      border: 1px solid rgba(34,197,94,.25); border-radius: 999px;
+      padding: .25rem .7rem; font-size: .75rem; font-weight: 600;
+    }
+    .nc-badge.off { background: rgba(239,68,68,.1); color: var(--red); border-color: rgba(239,68,68,.25); }
+
+    /* ── TTS toggle ── */
+    .tts-toggle {
+      display: inline-flex; align-items: center; gap: .35rem;
+      background: rgba(108,99,255,.1); color: var(--accent);
+      border: 1px solid rgba(108,99,255,.3); border-radius: 999px;
+      padding: .25rem .7rem; font-size: .75rem; font-weight: 600;
+      cursor: pointer; transition: .2s; user-select: none;
+    }
+    .tts-toggle:hover { border-color: var(--accent); }
+    .tts-toggle.active { background: rgba(108,99,255,.25); }
+    .tts-toggle .tts-icon { font-size: .9rem; }
+
+    /* ── Two-column transcript layout ── */
+    .panels {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <h1><span>Whisper</span> ASR</h1>
+    <p>Real-time GPU speech recognition — English &amp; Arabic</p>
+  </header>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <span class="status-dot {{ 'ok' if df_available else 'warn' }}" id="ncDot"></span>
+    <span class="nc-badge {{ '' if df_available else 'off' }}" id="ncBadge">
+      {{ '🛡 Noise Cancellation Active' if df_available else '⚠ Noise Cancellation Unavailable' }}
+    </span>
+    <span style="margin-left:1rem;" class="status-dot" id="wsDot"></span>
+    <span id="wsStatusBar">Disconnected</span>
+    <span style="margin-left:1rem;">
+      <span class="tts-toggle active" id="ttsToggle" title="Auto-speak English translations">
+        <span class="tts-icon">🔊</span> TTS
+      </span>
+    </span>
+  </div>
+
+  <!-- Main buttons -->
+  <div class="controls">
+    <button class="btn btn-live" id="liveBtn">🎙 Start Real-time</button>
+    <button class="btn btn-upload" id="uploadBtn">📁 Upload File</button>
+  </div>
+
+  <!-- Settings -->
+  <div class="model-row">
+    <label>Model:
+      <select id="modelSelect">
+        <option value="">Loading models…</option>
+      </select>
+    </label>
+    <span class="model-loading" id="modelLoading">
+      <span class="spinner"></span> Loading model…
+    </span>
+  </div>
+  <div class="settings-row">
+    <label>Language:
+      <select id="language">
+        <option value="en">English</option>
+        <option value="ar">Arabic (العربية)</option>
+        <option value="">Auto-detect</option>
+      </select>
+    </label>
+    <label>Chunk:
+      <select id="chunkDuration">
+        <option value="semantic" selected>Semantic (auto turn)</option>
+        <option value="2">2s (fixed)</option>
+        <option value="3">3s (fixed)</option>
+        <option value="5">5s (fixed)</option>
+        <option value="8">8s (fixed)</option>
+      </select>
+    </label>
+  </div>
+
+  <!-- Waveform visualizer -->
+  <div class="waveform-container" id="waveformContainer">
+    <div class="waveform-header">
+      <span><span class="live-dot"></span> LIVE AUDIO</span>
+      <span id="vadState" style="font-size:.76rem;color:var(--muted);margin-left:auto;margin-right:.6rem;"></span>
+      <span id="wsStatus">Waiting…</span>
+    </div>
+    <canvas id="waveCanvas"></canvas>
+    <div class="vu-row">
+      <span style="font-size:.72rem;color:var(--muted);">Level</span>
+      <div class="vu-bar-track"><div class="vu-bar-fill" id="vuFill"></div></div>
+      <span class="vu-db" id="vuDb">-∞ dB</span>
+    </div>
+  </div>
+
+  <!-- Transcript -->
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="transcriptLabel">Transcript</h3>
+        <button class="copy-btn" onclick="copyPanel('transcriptBody')">Copy</button>
+      </div>
+      <div class="panel-body" id="transcriptBody" dir="ltr"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="translationLabel">Translation</h3>
+        <button class="copy-btn" onclick="copyPanel('translationBody')">Copy</button>
+      </div>
+      <div class="panel-body" id="translationBody" dir="rtl"></div>
+    </div>
+  </div>
+
+  <!-- File upload progress -->
+  <div class="progress" id="uploadProgress">
+    <div class="bar-track"><div class="bar-fill" id="uploadFill"></div></div>
+    <div class="label" id="uploadLabel">Processing…</div>
+  </div>
+</div>
+
+<!-- File upload overlay -->
+<div class="upload-overlay" id="uploadOverlay">
+  <div class="upload-box" id="dropZone">
+    <p style="font-size:2rem;">📁</p>
+    <p>Drop audio file here or <strong>click to browse</strong></p>
+    <p style="font-size:.78rem;color:#555;">mp3 · wav · m4a · ogg · flac · webm</p>
+    <input type="file" id="fileInput" accept="audio/*" hidden />
+    <div style="margin-top:1rem;">
+      <button class="btn btn-upload" onclick="document.getElementById('uploadOverlay').classList.remove('show')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──
+let language = 'en';
+let isLive = false;
+let ws = null;
+let audioCtx = null;
+let micStream = null;
+let analyser = null;
+let sourceNode = null;
+let processorNode = null;
+let waveAnimId = null;
+let ttsEnabled = true;
+let ttsQueue = [];
+let ttsPlaying = false;
+
+const liveBtn = document.getElementById('liveBtn');
+const uploadBtn = document.getElementById('uploadBtn');
+const transcriptBody = document.getElementById('transcriptBody');
+const transcriptLabel = document.getElementById('transcriptLabel');
+const translationBody = document.getElementById('translationBody');
+const translationLabel = document.getElementById('translationLabel');
+const languageSelect = document.getElementById('language');
+const waveformContainer = document.getElementById('waveformContainer');
+const waveCanvas = document.getElementById('waveCanvas');
+const waveCtx = waveCanvas.getContext('2d');
+const vuFill = document.getElementById('vuFill');
+const vuDb = document.getElementById('vuDb');
+const wsDot = document.getElementById('wsDot');
+const wsStatus = document.getElementById('wsStatus');
+const wsStatusBar = document.getElementById('wsStatusBar');
+
+// Resize canvas to actual pixel size
+function resizeCanvas() {
+  const rect = waveCanvas.getBoundingClientRect();
+  waveCanvas.width = rect.width * window.devicePixelRatio;
+  waveCanvas.height = rect.height * window.devicePixelRatio;
+  waveCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+}
+
+// ── Language ──
+languageSelect.addEventListener('change', () => {
+  language = languageSelect.value;
+  updateLabel();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'config', language }));
+  }
+});
+
+function updateLabel() {
+  const names = { en: 'English', ar: 'Arabic', '': 'Auto-detect' };
+  const srcName = names[language] || 'Auto-detect';
+  const tgtName = language === 'ar' ? 'English' : 'Arabic';
+  transcriptLabel.textContent = 'Transcript (' + srcName + ')';
+  translationLabel.textContent = 'Translation (' + tgtName + ')';
+  transcriptBody.dir = language === 'ar' ? 'rtl' : 'ltr';
+  translationBody.dir = language === 'ar' ? 'ltr' : 'rtl';
+}
+
+function setStatus(text) {
+  wsStatus.textContent = text;
+  wsStatusBar.textContent = text;
+}
+
+// ── Waveform drawing ──
+function drawWaveform() {
+  if (!analyser) return;
+  waveAnimId = requestAnimationFrame(drawWaveform);
+
+  const bufLen = analyser.fftSize;
+  const dataArray = new Float32Array(bufLen);
+  analyser.getFloatTimeDomainData(dataArray);
+
+  // Use CSS dimensions for drawing
+  const cssW = waveCanvas.getBoundingClientRect().width;
+  const cssH = waveCanvas.getBoundingClientRect().height;
+  const mid = cssH / 2;
+
+  // Clear
+  waveCtx.save();
+  waveCtx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+  waveCtx.fillStyle = '#14161f';
+  waveCtx.fillRect(0, 0, cssW, cssH);
+
+  // Center line
+  waveCtx.strokeStyle = '#2a2d3a';
+  waveCtx.lineWidth = 1;
+  waveCtx.beginPath();
+  waveCtx.moveTo(0, mid);
+  waveCtx.lineTo(cssW, mid);
+  waveCtx.stroke();
+
+  // Waveform
+  waveCtx.strokeStyle = '#6c63ff';
+  waveCtx.lineWidth = 2;
+  waveCtx.shadowColor = '#6c63ff';
+  waveCtx.shadowBlur = 6;
+  waveCtx.beginPath();
+
+  const step = Math.ceil(bufLen / cssW);
+  for (let x = 0; x < cssW; x++) {
+    const idx = Math.floor(x * bufLen / cssW);
+    // Take max amplitude in this step range for better visibility
+    let maxVal = 0;
+    for (let j = idx; j < Math.min(idx + step, bufLen); j++) {
+      if (Math.abs(dataArray[j]) > Math.abs(maxVal)) maxVal = dataArray[j];
+    }
+    const y = mid + maxVal * mid * 3; // amplify 3x for visibility
+    if (x === 0) waveCtx.moveTo(x, y);
+    else waveCtx.lineTo(x, y);
+  }
+  waveCtx.stroke();
+  waveCtx.shadowBlur = 0;
+
+  // Glow fill
+  waveCtx.lineTo(cssW, mid);
+  waveCtx.lineTo(0, mid);
+  waveCtx.closePath();
+  const grad = waveCtx.createLinearGradient(0, 0, 0, cssH);
+  grad.addColorStop(0, 'rgba(108,99,255,0.18)');
+  grad.addColorStop(0.5, 'rgba(108,99,255,0.02)');
+  grad.addColorStop(1, 'rgba(108,99,255,0.18)');
+  waveCtx.fillStyle = grad;
+  waveCtx.fill();
+  waveCtx.restore();
+
+  // VU meter
+  let sum = 0;
+  for (let i = 0; i < bufLen; i++) sum += dataArray[i] * dataArray[i];
+  const rms = Math.sqrt(sum / bufLen);
+  const db = 20 * Math.log10(Math.max(rms, 1e-7));
+  const pct = Math.max(0, Math.min(100, (db + 60) * (100 / 60)));
+  vuFill.style.width = pct + '%';
+  vuDb.textContent = (rms > 1e-6 ? db.toFixed(0) : '-∞') + ' dB';
+}
+
+// ── Live streaming ──
+liveBtn.addEventListener('click', () => {
+  if (isLive) stopLive(); else startLive();
+});
+
+async function startLive() {
+  transcriptBody.textContent = '';
+  translationBody.textContent = '';
+  setStatus('Requesting mic…');
+
+  // 1. Get microphone FIRST
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      }
+    });
+  } catch (e) {
+    alert('Microphone access denied: ' + e.message);
+    setStatus('Mic denied');
+    return;
+  }
+
+  console.log('Mic stream tracks:', micStream.getAudioTracks().map(t => t.label + ' ' + t.readyState));
+  setStatus('Mic OK, connecting…');
+
+  // 2. Create AudioContext and RESUME it
+  audioCtx = new AudioContext();
+  // Critical: browsers suspend AudioContext until user gesture + explicit resume
+  if (audioCtx.state === 'suspended') {
+    await audioCtx.resume();
+  }
+  console.log('AudioContext state:', audioCtx.state, 'sampleRate:', audioCtx.sampleRate);
+
+  const nativeSR = audioCtx.sampleRate;
+
+  // 3. Connect mic to audio graph
+  sourceNode = audioCtx.createMediaStreamSource(micStream);
+
+  // Analyser for waveform
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.3;
+  sourceNode.connect(analyser);
+
+  // ScriptProcessor to capture PCM and send over WebSocket
+  processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  processorNode.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const input = e.inputBuffer.getChannelData(0);
+
+    // Resample to 16kHz
+    const ratio = 16000 / nativeSR;
+    const outLen = Math.round(input.length * ratio);
+    const resampled = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const srcIdx = i / ratio;
+      const idx0 = Math.floor(srcIdx);
+      const idx1 = Math.min(idx0 + 1, input.length - 1);
+      const frac = srcIdx - idx0;
+      resampled[i] = input[idx0] * (1 - frac) + input[idx1] * frac;
+    }
+
+    // Float32 → Int16 PCM
+    const pcm = new Int16Array(resampled.length);
+    for (let i = 0; i < resampled.length; i++) {
+      const s = Math.max(-1, Math.min(1, resampled[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    ws.send(pcm.buffer);
+  };
+
+  // Connect: source → analyser (for viz), source → processor → destination (to keep it alive)
+  sourceNode.connect(processorNode);
+  processorNode.connect(audioCtx.destination);
+
+  // 4. Show waveform immediately so user sees mic is working
+  waveformContainer.classList.add('active');
+  resizeCanvas();
+  drawWaveform();
+
+  // 5. Open WebSocket
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    wsDot.classList.add('ok');
+    setStatus('Connected — listening…');
+    const mode = document.getElementById('chunkDuration').value;
+    if (mode === 'semantic') {
+      document.getElementById('vadState').textContent = '👂 Listening…';
+    }
+    ws.send(JSON.stringify({
+      type: 'config',
+      language,
+      chunk_duration: mode,
+    }));
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    const vadEl = document.getElementById('vadState');
+    if (msg.type === 'vad') {
+      if (msg.state === 'speaking') {
+        vadEl.textContent = '🎙️ Speaking…';
+        vadEl.style.color = 'var(--green)';
+      } else if (msg.state === 'processing') {
+        vadEl.textContent = `⏳ Processing ${msg.duration}s…`;
+        vadEl.style.color = 'var(--yellow)';
+      } else {
+        vadEl.textContent = '👂 Listening…';
+        vadEl.style.color = 'var(--muted)';
+      }
+    }
+    if (msg.type === 'result') {
+      vadEl.textContent = '� Listening…';
+      vadEl.style.color = 'var(--muted)';
+
+      appendChunk(transcriptBody, msg.text);
+      transcriptBody.scrollTop = transcriptBody.scrollHeight;
+      if (msg.translated) {
+        appendChunk(translationBody, msg.translated);
+        translationBody.scrollTop = translationBody.scrollHeight;
+      }
+      // TTS: speak the translated text
+      if (ttsEnabled && msg.translated && msg.translated.trim()) {
+        speakText(msg.translated, msg.target_language || 'en');
+      }
+    }
+  };
+
+  ws.onerror = () => setStatus('WebSocket error');
+  ws.onclose = () => {
+    wsDot.classList.remove('ok');
+    setStatus('Disconnected');
+  };
+
+  liveBtn.textContent = '⏹ Stop';
+  liveBtn.classList.add('recording');
+  isLive = true;
+}
+
+function stopLive() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'stop' }));
+    ws.close();
+  }
+  if (waveAnimId) { cancelAnimationFrame(waveAnimId); waveAnimId = null; }
+  if (processorNode) { processorNode.disconnect(); processorNode = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  analyser = null;
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+
+  waveformContainer.classList.remove('active');
+  liveBtn.textContent = '🎙 Start Real-time';
+  liveBtn.classList.remove('recording');
+  isLive = false;
+  setStatus('Disconnected');
+}
+
+function appendChunk(el, text) {
+  if (!text || !text.trim()) return;
+  const span = document.createElement('span');
+  span.className = 'chunk-new';
+  span.textContent = (el.textContent ? ' ' : '') + text;
+  el.appendChild(span);
+}
+
+// ── File upload ──
+const uploadOverlay = document.getElementById('uploadOverlay');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadBtn.addEventListener('click', () => uploadOverlay.classList.add('show'));
+dropZone.addEventListener('click', (e) => {
+  if (e.target === dropZone || e.target.tagName === 'P' || e.target.tagName === 'STRONG')
+    fileInput.click();
+});
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+async function handleFile(file) {
+  uploadOverlay.classList.remove('show');
+  transcriptBody.textContent = '';
+  translationBody.textContent = '';
+
+  const prog = document.getElementById('uploadProgress');
+  const fill = document.getElementById('uploadFill');
+  const label = document.getElementById('uploadLabel');
+  prog.style.display = 'block';
+  fill.style.width = '20%';
+  label.textContent = 'Uploading & processing (noise cancel → transcribe)…';
+
+  const form = new FormData();
+  form.append('audio', file);
+  form.append('language', language);
+
+  try {
+    fill.style.width = '40%';
+    const res = await fetch('/transcribe', { method: 'POST', body: form });
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    fill.style.width = '90%';
+
+    const data = await res.json();
+    transcriptBody.textContent = data.text;
+    if (data.translated) translationBody.textContent = data.translated;
+    fill.style.width = '100%';
+    label.textContent = 'Done!';
+  } catch (err) {
+    alert('Error: ' + err.message);
+    label.textContent = 'Failed';
+  }
+  setTimeout(() => { prog.style.display = 'none'; }, 1500);
+}
+
+// ── TTS playback ──
+const ttsToggle = document.getElementById('ttsToggle');
+ttsToggle.addEventListener('click', () => {
+  ttsEnabled = !ttsEnabled;
+  ttsToggle.classList.toggle('active', ttsEnabled);
+  ttsToggle.querySelector('.tts-icon').textContent = ttsEnabled ? '🔊' : '🔇';
+  if (!ttsEnabled) { ttsQueue = []; }
+});
+
+async function speakText(text, lang) {
+  ttsQueue.push({ text, lang: lang || 'en' });
+  if (ttsPlaying) return;
+  ttsPlaying = true;
+  while (ttsQueue.length > 0) {
+    const item = ttsQueue.shift();
+    try {
+      const res = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: item.text, lang: item.lang }),
+      });
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      await new Promise((resolve) => {
+        const audio = new Audio(url);
+        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(resolve);
+      });
+    } catch {}
+  }
+  ttsPlaying = false;
+}
+
+// ── Model switching ──
+const modelSelect = document.getElementById('modelSelect');
+const modelLoading = document.getElementById('modelLoading');
+
+// Fetch models from API and populate dropdown
+(async function syncModel() {
+  try {
+    const res = await fetch('/models');
+    const data = await res.json();
+    modelSelect.innerHTML = '';
+    for (const m of data.models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      if (m.active) opt.selected = true;
+      modelSelect.appendChild(opt);
+    }
+  } catch {}
+})();
+
+modelSelect.addEventListener('change', async () => {
+  const modelId = modelSelect.value;
+  if (isLive) { stopLive(); }
+
+  modelSelect.disabled = true;
+  modelLoading.classList.add('active');
+  modelLoading.querySelector('span:last-child').textContent =
+    `Loading ${modelId === 'octopus' ? 'Octopus' : modelId}…`;
+
+  try {
+    const res = await fetch('/switch-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Model switch failed: ' + data.error);
+      // Revert selection
+      const cur = await fetch('/models');
+      const curData = await cur.json();
+      modelSelect.value = curData.current;
+    }
+  } catch (err) {
+    alert('Model switch error: ' + err.message);
+  }
+  modelSelect.disabled = false;
+  modelLoading.classList.remove('active');
+});
+
+// ── Utilities ──
+function copyPanel(id) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent);
+}
+
+// Init
+updateLabel();
+</script>
+</body>
+</html>
