@@ -1,0 +1,31 @@
+[Unit]
+Description=Whisper ASR Real-time Service
+After=network.target
+
+[Service]
+Type=simple
+User=whisper
+Group=whisper
+WorkingDirectory=/opt/whisper-asr
+ExecStart=/opt/whisper-asr/venv/bin/gunicorn app:app \
+    --bind 127.0.0.1:8000 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 1 \
+    --timeout 300 \
+    --keep-alive 65 \
+    --access-logfile /var/log/whisper-asr/access.log \
+    --error-logfile /var/log/whisper-asr/error.log
+Restart=on-failure
+RestartSec=10
+Environment=WHISPER_DEVICE=cuda
+Environment=WHISPER_COMPUTE=float16
+Environment=WHISPER_MODEL=large-v3
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/whisper-asr /var/log/whisper-asr /root/.cache/huggingface
+
+[Install]
+WantedBy=multi-user.target

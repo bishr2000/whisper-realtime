@@ -1,0 +1,13 @@
+# Ignore for smaller Docker builds
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.md
+LICENSE
+run.bat
+octopus_repo/examples/
+octopus_repo/.git/
+templates/*.bak

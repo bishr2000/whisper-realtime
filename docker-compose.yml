@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  whisper-asr:
+    build: .
+    runtime: nvidia          # requires nvidia-container-toolkit
+    ports:
+      - "8000:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - WHISPER_DEVICE=cuda
+      - WHISPER_COMPUTE=float16
+      - WHISPER_MODEL=large-v3
+      - CHUNK_DURATION=3
+      - TTS_VOICE=af_heart
+    volumes:
+      # Persist HuggingFace model cache across restarts
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s    # models take time to load
+
+volumes:
+  hf-cache:
